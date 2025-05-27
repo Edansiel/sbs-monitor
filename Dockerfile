@@ -1,5 +1,5 @@
 # ✅ Imagen oficial de Playwright con navegadores ya preinstalados
-FROM mcr.microsoft.com/playwright:v1.41.0-jammy
+FROM mcr.microsoft.com/playwright:v1.52.0-jammy
 
 # 🗂️ Directorio de trabajo dentro del contenedor
 WORKDIR /app
