@@ -1,0 +1,18 @@
+# 🗂️ Archivos del sistema
+node_modules/
+storage.json
+.env
+*.log
+
+# 🧪 Playwright
+playwright-report/
+test-results/
+*.zip
+
+# 💻 VSCode
+.vscode/
+
+# ⚙️ Archivos temporales
+.DS_Store
+Thumbs.db
+*.tmp
