@@ -3,6 +3,9 @@ services:
     name: sbs-monitor
     env: node
     plan: free
-    buildCommand: npm install && npx playwright install
+    branch: main
+    buildCommand: |
+      npm install
+      npx playwright install --with-deps
     startCommand: node index.js
     autoDeploy: true
