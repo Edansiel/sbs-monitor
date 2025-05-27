@@ -1,20 +1,24 @@
-# ✅ Imagen oficial de Playwright con navegadores ya preinstalados
-FROM mcr.microsoft.com/playwright:v1.52.0-jammy
+# ✅ Usa una imagen oficial de Node.js
+FROM node:20-slim
 
-# 🗂️ Directorio de trabajo dentro del contenedor
+# 🧱 Instala dependencias del sistema necesarias para Playwright
+RUN apt-get update && apt-get install -y \
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxss1 libasound2 \
+    libxshmfence1 libgbm-dev wget unzip fonts-liberation libappindicator3-1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 🗂️ Directorio de trabajo
 WORKDIR /app
 
-# 📦 Copiar archivos de dependencias primero
+# 📦 Copiar y preparar dependencias
 COPY package*.json ./
+RUN npm install && npx playwright install --with-deps
 
-# 🧰 Instalar dependencias del proyecto
-RUN npm install
-
-# 📁 Copiar el resto del código
+# 📁 Copiar el código
 COPY . .
 
-# 🌐 Render necesita que se exponga un puerto (aunque no lo uses)
+# 🌐 Exponer puerto (opcional si no usas servidor web)
 EXPOSE 3000
 
-# ▶️ Comando para iniciar tu script
+# ▶️ Ejecutar script
 CMD ["node", "index.js"]
