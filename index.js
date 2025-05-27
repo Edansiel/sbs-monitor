@@ -1,69 +1,65 @@
+// index.js
 const { chromium } = require('playwright');
-const fs = require('fs');
-const axios = require('axios');
+const fs     = require('fs');
+const axios  = require('axios');
 
-const URL = 'https://www.sbs.gob.pe/app/pp/sistip_portal/paginas/publicacion/tipocambiopromedio.aspx';
+const URL          = 'https://www.sbs.gob.pe/app/pp/sistip_portal/paginas/publicacion/tipocambiopromedio.aspx';
 const STORAGE_FILE = './storage.json';
-const WEBHOOK_N8N = 'https://jeancarlovidela.app.n8n.cloud/webhook/8f405f9f-2fc3-459b-9b04-bd190c5fe17c';
+const WEBHOOK_N8N  = 'https://jeancarlovidela.app.n8n.cloud/webhook/8f405f9f-2fc3-459b-9b04-bd190c5fe17c';
+const EVERY_MINUTE = 60_000;       // 1 min en ms
 
-(async () => {
+async function checkAndSend () {
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const page    = await browser.newPage();
 
   await page.setExtraHTTPHeaders({
-    'User-Agent': 'Mozilla/5.0',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'es-PE,es;q=0.9',
+    'User-Agent'      : 'Mozilla/5.0',
+    'Accept'          : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language' : 'es-PE,es;q=0.9',
   });
 
-  await page.goto(URL, { waitUntil: 'networkidle', timeout: 60000 });
-  await page.waitForSelector('#ctl00_cphContent_lblFecha', { timeout: 60000 });
+  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.waitForSelector('#ctl00_cphContent_lblFecha', { timeout: 60_000 });
 
-  // 📅 Extraer la fecha del sitio
-  const textoFecha = await page.textContent('#ctl00_cphContent_lblFecha');
-  const fechaSBS = textoFecha?.trim().match(/\d{2}\/\d{2}\/\d{4}/)?.[0]; // ej. "27/05/2025"
+  // 📅 Ej: "Tipo de Cambio al 27/05/2025"
+  const texto     = await page.textContent('#ctl00_cphContent_lblFecha');
+  const fechaSBS  = (texto || '').match(/\d{2}\/\d{2}\/\d{4}/)?.[0];           // "27/05/2025"
+  await browser.close();
 
   if (!fechaSBS) {
-    console.error('❌ No se pudo leer la fecha del sitio');
-    await browser.close();
+    console.error('❌  No se pudo extraer la fecha de la SBS');
     return;
   }
 
-  // 📆 Obtener fecha actual en Lima (UTC-5) usando solo JavaScript
-  const ahoraUTC = new Date();
-  const offsetLima = -5 * 60;
-  const fechaLima = new Date(ahoraUTC.getTime() + offsetLima * 60 * 1000);
+  // 🗓️ Fecha actual en Lima, sin librerías externas
+  const ahoraLima = new Intl.DateTimeFormat('es-PE', {
+    timeZone : 'America/Lima',
+    day      : '2-digit',
+    month    : '2-digit',
+    year     : 'numeric'
+  }).format(new Date());                                                     // "27/05/2025"
 
-  // 🔄 Formatear fecha como "dd/mm/yyyy"
-  const fechaLimaFormateada = fechaLima.toLocaleDateString('es-PE', {
-    timeZone: 'UTC', // ya ajustamos la hora antes
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
-
-  console.log(`🕓 Fecha SBS: ${fechaSBS} | Fecha Lima: ${fechaLimaFormateada}`);
-
-  // 🗂️ Leer archivo local
-  let ultimaFechaEnviada = null;
+  // 🗂️ Lee la última fecha enviada (si existe)
+  let ultimaEnviada = null;
   if (fs.existsSync(STORAGE_FILE)) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(STORAGE_FILE, 'utf-8'));
-      ultimaFechaEnviada = parsed.fecha;
-    } catch (e) {
-      console.warn('⚠️ Error leyendo storage.json');
-    }
+    try { ultimaEnviada = JSON.parse(fs.readFileSync(STORAGE_FILE)).fecha; }
+    catch { /* archivo vacío/corrupto ⇒ lo ignoramos */ }
   }
 
-  const debeEnviar = fechaSBS === fechaLimaFormateada && fechaSBS !== ultimaFechaEnviada;
+  const esHoySBS     = fechaSBS === ahoraLima;
+  const yaEnviadaHoy = ultimaEnviada === ahoraLima;
 
-  if (debeEnviar) {
-    console.log('🚀 Enviando al webhook:', fechaSBS);
+  if (esHoySBS && !yaEnviadaHoy) {
+    console.log('🚀  Webhook enviado – fecha:', fechaSBS);
     await axios.post(WEBHOOK_N8N, { fecha: fechaSBS });
     fs.writeFileSync(STORAGE_FILE, JSON.stringify({ fecha: fechaSBS }));
   } else {
-    console.log('✅ Sin cambios o ya se envió hoy.');
+    console.log('⏸️   Nada que enviar.  Fecha SBS:', fechaSBS,
+                '| Hoy Lima:', ahoraLima,
+                '| Última enviada:', ultimaEnviada ?? '―');
   }
+}
 
-  await browser.close();
-})();
+// ⏲️ Primer disparo inmediato y luego cada minuto
+checkAndSend().catch(console.error);
+setInterval(() => checkAndSend().catch(console.error), EVERY_MINUTE);
