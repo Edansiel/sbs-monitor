@@ -1,7 +1,7 @@
-// index.js
 const { chromium } = require('playwright');
 const fs     = require('fs');
 const axios  = require('axios');
+const express = require('express'); // 👈 NUEVO
 
 const URL          = 'https://www.sbs.gob.pe/app/pp/sistip_portal/paginas/publicacion/tipocambiopromedio.aspx';
 const STORAGE_FILE = './storage.json';
@@ -21,9 +21,8 @@ async function checkAndSend () {
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await page.waitForSelector('#ctl00_cphContent_lblFecha', { timeout: 60_000 });
 
-  // 📅 Ej: "Tipo de Cambio al 27/05/2025"
   const texto     = await page.textContent('#ctl00_cphContent_lblFecha');
-  const fechaSBS  = (texto || '').match(/\d{2}\/\d{2}\/\d{4}/)?.[0];           // "27/05/2025"
+  const fechaSBS  = (texto || '').match(/\d{2}\/\d{2}\/\d{4}/)?.[0];
   await browser.close();
 
   if (!fechaSBS) {
@@ -31,19 +30,17 @@ async function checkAndSend () {
     return;
   }
 
-  // 🗓️ Fecha actual en Lima, sin librerías externas
   const ahoraLima = new Intl.DateTimeFormat('es-PE', {
     timeZone : 'America/Lima',
     day      : '2-digit',
     month    : '2-digit',
     year     : 'numeric'
-  }).format(new Date());                                                     // "27/05/2025"
+  }).format(new Date());
 
-  // 🗂️ Lee la última fecha enviada (si existe)
   let ultimaEnviada = null;
   if (fs.existsSync(STORAGE_FILE)) {
     try { ultimaEnviada = JSON.parse(fs.readFileSync(STORAGE_FILE)).fecha; }
-    catch { /* archivo vacío/corrupto ⇒ lo ignoramos */ }
+    catch {}
   }
 
   const esHoySBS     = fechaSBS === ahoraLima;
@@ -60,6 +57,12 @@ async function checkAndSend () {
   }
 }
 
-// ⏲️ Primer disparo inmediato y luego cada minuto
+// ▶️ Inicia el scraping en loop
 checkAndSend().catch(console.error);
 setInterval(() => checkAndSend().catch(console.error), EVERY_MINUTE);
+
+// 🌐 Servidor Express para Render
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.get('/', (_, res) => res.send('✅ SBS Monitor activo'));
+app.listen(PORT, () => console.log(`🌐 Servidor activo en puerto ${PORT}`));
