@@ -1,18 +1,36 @@
-# 🗂️ Archivos del sistema
+# 🗂️ Archivos del sistema y configuración local
 node_modules/
 storage.json
+logs.json
 .env
 *.log
+*.bak
 
-# 🧪 Playwright
+# 📦 Dependencias de paquetes
+package-lock.json
+
+# 🧪 Playwright y testing
 playwright-report/
 test-results/
 *.zip
+*.trace
+*.png
+*.webm
 
-# 💻 VSCode
+# 💻 Configuración del entorno
 .vscode/
+.idea/
+*.code-workspace
 
-# ⚙️ Archivos temporales
+# ⚙️ Archivos temporales / del sistema operativo
 .DS_Store
 Thumbs.db
 *.tmp
+*.swp
+*.swo
+*.orig
+
+# 📦 Builds opcionales / docker
+dist/
+build/
+docker-volume/

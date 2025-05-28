@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SBS Monitor Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏛️</text></svg>">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      margin: 0;
+      background: #f1f5f9;
+      color: #1f2937;
+    }
+
+    header {
+      background: #0f766e;
+      color: #fff;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      display: flex;
+      align-items: center;
+      font-size: 1.5rem;
+      gap: 10px;
+    }
+
+    .clock, .next-clean {
+      font-size: 1rem;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 0.5rem;
+    }
+
+    main {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      padding: 2rem;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      flex: 1 1 45%;
+      min-width: 300px;
+      padding: 1rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card h2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.2rem;
+      color: #0f766e;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 5px;
+      margin-bottom: 10px;
+    }
+
+    .scrollable {
+      overflow-y: auto;
+      max-height: 65vh;
+    }
+
+    .log-entry {
+      border-left: 4px solid #e5e7eb;
+      padding: 0.5rem 0.5rem 0.5rem 1rem;
+      margin-bottom: 10px;
+      background: #f9fafb;
+      border-radius: 4px;
+    }
+
+    .log-entry.sent {
+      border-left-color: #16a34a;
+    }
+
+    .log-entry.idle {
+      border-left-color: #94a3b8;
+    }
+
+    .log-entry .time {
+      font-weight: bold;
+      margin-bottom: 4px;
+      font-size: 0.9rem;
+    }
+
+    .log-entry .details {
+      font-size: 0.85rem;
+    }
+
+    a.webhook-link {
+      color: #0f766e;
+      text-decoration: underline;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1><i class="fas fa-building-columns"></i> SBS Monitor</h1>
+      <div class="next-clean" id="next-clean"><i class="fas fa-history"></i> Próxima limpieza en: ―</div>
+    </div>
+    <div class="clock">🕒 <span id="clock">―:―:―</span></div>
+  </header>
+
+  <main>
+    <div class="card">
+      <h2><i class="fas fa-paper-plane"></i> Webhooks Enviados</h2>
+      <div id="sent-logs" class="scrollable"></div>
+    </div>
+
+    <div class="card">
+      <h2><i class="fas fa-wave-square"></i> Log en Tiempo Real</h2>
+      <div id="live-logs" class="scrollable"></div>
+    </div>
+  </main>
+
+  <script>
+    const WEBHOOK_N8N = 'https://jeancarlovidela.app.n8n.cloud/webhook/8f405f9f-2fc3-459b-9b04-bd190c5fe17c';
+    const DAYS_TO_KEEP = 5;
+    let countdownInterval = null;
+
+    // 🕒 Actualiza el reloj cada segundo
+    function updateClock() {
+      const now = new Date();
+      document.getElementById("clock").textContent = now.toLocaleTimeString("es-PE");
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // 🔁 Carga y muestra logs
+    async function loadLogs() {
+      const res = await fetch('/logs');
+      const data = await res.json();
+
+      const liveContainer = document.getElementById('live-logs');
+      const sentContainer = document.getElementById('sent-logs');
+      liveContainer.innerHTML = '';
+      sentContainer.innerHTML = '';
+
+      if (!data.length) return;
+
+      const reversed = data.slice().reverse();
+      const lastTimestamp = new Date(reversed[0].timestamp).getTime();
+      const nextDeleteTime = new Date(lastTimestamp + DAYS_TO_KEEP * 24 * 60 * 60 * 1000);
+
+      if (countdownInterval) clearInterval(countdownInterval);
+      countdownInterval = setInterval(() => updateCountdown(nextDeleteTime), 1000);
+      updateCountdown(nextDeleteTime);
+
+      reversed.forEach(log => {
+        const dt = new Date(log.timestamp);
+        const time = dt.toLocaleTimeString('es-PE');
+        const date = dt.toLocaleDateString('es-PE');
+
+        const entry = document.createElement('div');
+        entry.className = 'log-entry ' + (log.enviado ? 'sent' : 'idle');
+        entry.innerHTML = `
+          <div class="time">🕓 ${date} ${time}</div>
+          <div class="details">
+            ${log.enviado
+              ? `🚀 <strong>Webhook enviado</strong><br>
+                 📅 Fecha SBS: ${log.fechaSBS}<br>
+                 🔗 Webhook: <a class="webhook-link" href="${WEBHOOK_N8N}" target="_blank">${WEBHOOK_N8N}</a>`
+              : `⏸️ <strong>Nada que enviar</strong><br>
+                 📅 Fecha SBS: ${log.fechaSBS}`
+            }
+          </div>
+        `;
+        liveContainer.appendChild(entry);
+        if (log.enviado) sentContainer.appendChild(entry.cloneNode(true));
+      });
+    }
+
+    // ⏳ Cuenta regresiva de limpieza
+    function updateCountdown(targetTime) {
+      const now = new Date().getTime();
+      const remaining = targetTime - now;
+
+      if (remaining <= 0) {
+        document.getElementById('next-clean').innerHTML = '🧹 Regenerando logs...';
+        return;
+      }
+
+      const days = Math.floor(remaining / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((remaining / (1000 * 60 * 60)) % 24);
+      const minutes = Math.floor((remaining / (1000 * 60)) % 60);
+      const seconds = Math.floor((remaining / 1000) % 60);
+
+      document.getElementById('next-clean').innerHTML =
+        `<i class="fas fa-history"></i> Próxima limpieza en: ${days}d ${hours}h ${minutes}m ${seconds}s`;
+    }
+
+    // ⚡ Llamada inicial
+    loadLogs();
+
+    // 🧠 Si tu backend llama a `window.refreshLogs()` tras análisis, esto lo permite
+    window.refreshLogs = loadLogs;
+  </script>
+
+</body>
+</html>
