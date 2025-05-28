@@ -4,9 +4,12 @@ const fs           = require('fs');
 const { chromium } = require('playwright');
 const axios        = require('axios');
 
-const app          = express();
-const PORT         = process.env.PORT || 3000;
+const app  = express();
+const http = require('http').createServer(app);
+const { Server } = require('socket.io');
+const io   = new Server(http);             // 🔌 WebSocket server
 
+const PORT         = process.env.PORT || 3000;
 const URL          = 'https://www.sbs.gob.pe/app/pp/sistip_portal/paginas/publicacion/tipocambiopromedio.aspx';
 const STORAGE_FILE = path.join(__dirname, 'storage.json');
 const LOG_FILE     = path.join(__dirname, 'logs.json');
@@ -16,92 +19,95 @@ const EVERY_MINUTE = 60_000;
 const DAYS_TO_KEEP = 5;
 const MS_IN_DAY    = 24 * 60 * 60 * 1000;
 
-// 1️⃣ Sirve todo lo que esté en /public
+// 👉  carpeta “public/” con index.html, css, etc.
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 2️⃣ Endpoint para los logs en JSON
+// API REST para que el front pueda pedir los logs
 app.get('/logs', (_, res) => {
   let history = [];
   if (fs.existsSync(LOG_FILE)) {
-    try { history = JSON.parse(fs.readFileSync(LOG_FILE, 'utf-8')); }
-    catch {}
+    try { history = JSON.parse(fs.readFileSync(LOG_FILE, 'utf-8')); } catch {}
   }
   res.json(history);
 });
 
-// 3️⃣ Función de chequeo y webhook
+// Evento cuando alguien abre el dashboard
+io.on('connection', socket => {
+  console.log('📡 Cliente conectado:', socket.id);
+});
+
+// -----------------------------------------------------------------------------
+// Función que comprueba la SBS y, si corresponde, envía webhook
+// -----------------------------------------------------------------------------
 async function checkAndSend() {
   const browser = await chromium.launch({ headless: true });
   const page    = await browser.newPage();
+
   await page.setExtraHTTPHeaders({
-    'User-Agent': 'Mozilla/5.0',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'User-Agent'     : 'Mozilla/5.0',
+    'Accept'         : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'es-PE,es;q=0.9'
   });
 
-  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForSelector('#ctl00_cphContent_lblFecha', { timeout: 60000 });
+  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.waitForSelector('#ctl00_cphContent_lblFecha', { timeout: 60_000 });
 
   const texto    = await page.textContent('#ctl00_cphContent_lblFecha');
-  const fechaSBS = (texto||'').match(/\d{2}\/\d{2}\/\d{4}/)?.[0];
+  const fechaSBS = (texto || '').match(/\d{2}\/\d{2}\/\d{4}/)?.[0];
   await browser.close();
 
   if (!fechaSBS) {
-    console.error('❌ No se pudo extraer la fecha de la SBS');
+    console.error('❌ No se pudo leer la fecha de la SBS');
     return;
   }
 
-  const ahoraLima = new Intl.DateTimeFormat('es-PE',{
+  const hoyLima = new Intl.DateTimeFormat('es-PE', {
     timeZone: 'America/Lima', day:'2-digit', month:'2-digit', year:'numeric'
   }).format(new Date());
 
-  // Última fecha enviada
-  let ultimaEnviada = null;
+  let ultima = null;
   if (fs.existsSync(STORAGE_FILE)) {
-    try {
-      ultimaEnviada = JSON.parse(fs.readFileSync(STORAGE_FILE, 'utf-8')).fecha;
-    } catch {}
+    try { ultima = JSON.parse(fs.readFileSync(STORAGE_FILE)).fecha; } catch {}
   }
 
-  const esHoySBS     = fechaSBS === ahoraLima;
-  const yaEnviadaHoy = ultimaEnviada === ahoraLima;
+  const esHoy    = fechaSBS === hoyLima;
+  const yaEnviada= ultima    === hoyLima;
 
-  // Si coincide y no hemos enviado hoy, disparamos webhook
-  if (esHoySBS && !yaEnviadaHoy) {
-    console.log('🚀 Webhook enviado – fecha:', fechaSBS);
+  // ---------------- Envío del webhook ----------------
+  if (esHoy && !yaEnviada) {
+    console.log('🚀 Webhook enviado –', fechaSBS);
     await axios.post(WEBHOOK_N8N, { fecha: fechaSBS });
-    fs.writeFileSync(STORAGE_FILE, JSON.stringify({ fecha: fechaSBS }, null, 2));
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify({ fecha: fechaSBS }));
   } else {
-    console.log('⏸️ Nada que enviar. Fecha SBS:', fechaSBS,
-                '| Hoy Lima:', ahoraLima,
-                '| Última enviada:', ultimaEnviada || '―');
+    console.log('⏸️ Nada que enviar. FechaSBS:', fechaSBS, '| Hoy:', hoyLima);
   }
 
-  // **Registra log** y mantiene sólo últimos N días
-  const entry = {
-    timestamp: new Date().toISOString(),
+  // ---------------- Registro de log ------------------
+  const entrada = {
+    timestamp : new Date().toISOString(),
     fechaSBS,
-    enviado: esHoySBS && !yaEnviadaHoy
+    enviado   : esHoy && !yaEnviada
   };
 
   let history = [];
   if (fs.existsSync(LOG_FILE)) {
-    try { history = JSON.parse(fs.readFileSync(LOG_FILE, 'utf-8')); }
-    catch { history = []; }
+    try { history = JSON.parse(fs.readFileSync(LOG_FILE)); } catch {}
   }
-  const now = Date.now();
+
+  const ahora = Date.now();
   history = history.filter(e =>
-    now - new Date(e.timestamp).getTime() <= DAYS_TO_KEEP * MS_IN_DAY
+    ahora - new Date(e.timestamp).getTime() <= DAYS_TO_KEEP * MS_IN_DAY
   );
-  history.push(entry);
+  history.push(entrada);
   fs.writeFileSync(LOG_FILE, JSON.stringify(history, null, 2));
+
+  // 🔔 Aviso al dashboard para que se refresque
+  io.emit('updateLogs');
 }
 
-// Arranca inmediatamente y luego cada minuto
+// Primera ejecución + cron cada minuto
 checkAndSend().catch(console.error);
 setInterval(() => checkAndSend().catch(console.error), EVERY_MINUTE);
 
-// **Levanta Express** para servir el dashboard
-app.listen(PORT, () =>
-  console.log(`🔌 Servidor corriendo en http://localhost:${PORT}`)
-);
+// -----------------------------------------------------------------
+http.listen(PORT, () => console.log(`🔌 Servidor en http://localhost:${PORT}`));
