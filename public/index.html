@@ -9,11 +9,12 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏛️</text></svg>">
 
   <!-- Font-Awesome -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 
   <style>
     /* ---------- Estilos ---------- */
-    body { margin:0; font-family:'Segoe UI',sans-serif; background:#f1f5f9; color:#1f2937; }
+    body{margin:0;font-family:'Segoe UI',sans-serif;background:#f1f5f9;color:#1f2937}
     header{background:#0f766e;color:#fff;padding:1rem 2rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap}
     header h1{display:flex;align-items:center;font-size:1.5rem;gap:10px;margin:0}
     .clock,.next-clean{font-weight:bold;display:flex;align-items:center;gap:6px;margin-top:.5rem;font-size:1rem}
@@ -50,23 +51,43 @@
     </div>
   </main>
 
-  <!-- Socket.IO cliente (sirve /socket.io desde tu backend) -->
+  <!-- Socket.IO cliente -->
   <script src="/socket.io/socket.io.js"></script>
 
   <script>
-    const WEBHOOK_N8N   = 'https://jeancarlovidela.app.n8n.cloud/webhook/8f405f9f-2fc3-459b-9b04-bd190c5fe17c';
-    const DAYS_TO_KEEP  = 5;
-    let countdownTimer  = null;
+    const WEBHOOK_N8N  = 'https://jeancarlovidela.app.n8n.cloud/webhook/8f405f9f-2fc3-459b-9b04-bd190c5fe17c';
+    const DAYS_TO_KEEP = 3;
 
-    // ---------------- Reloj en vivo ----------------
+    let nextDeleteTime   = null;   // ⬅️ persiste entre refrescos
+    let countdownHandle  = null;
+
+    /* ---------- Reloj ---------- */
     const updateClock = () =>
       document.getElementById('clock').textContent =
         new Date().toLocaleTimeString('es-PE');
     updateClock();
     setInterval(updateClock, 1000);
 
-    // ---------------- Cargar logs -----------------
-    async function loadLogs() {
+    /* ---------- Pinta cuenta-atrás ---------- */
+    function drawCountdown(){
+      const el = document.getElementById('next-clean');
+      if(!nextDeleteTime){ el.textContent = '⏳ Próxima limpieza en: ―'; return; }
+
+      const diff = nextDeleteTime - Date.now();
+      if(diff <= 0){
+        el.textContent = '🧹 Regenerando logs...';
+        clearInterval(countdownHandle);
+        return;
+      }
+      const d = Math.floor(diff/86_400_000);
+      const h = Math.floor(diff/3_600_000)%24;
+      const m = Math.floor(diff/60_000)%60;
+      const s = Math.floor(diff/1_000)%60;
+      el.textContent = `⏳ Próxima limpieza en: ${d}d ${h}h ${m}m ${s}s`;
+    }
+
+    /* ---------- Carga / redibuja logs ---------- */
+    async function loadLogs(){
       const res  = await fetch('/logs');
       const data = await res.json();
 
@@ -74,58 +95,43 @@
       const sent = document.getElementById('sent-logs');
       live.innerHTML = sent.innerHTML = '';
 
-      if (!data.length) return;
+      if(!data.length) return;
 
-      const reversed = data.slice().reverse();
-      const lastTs   = new Date(reversed[0].timestamp).getTime();
-      const nextClean= new Date(lastTs + DAYS_TO_KEEP*24*60*60*1000);
+      /* solo la PRIMERA vez —o si los logs fueron purgados— fijamos nextDeleteTime */
+      if(!nextDeleteTime){
+        const oldestTs = new Date(data[0].timestamp).getTime();   // más antiguo
+        nextDeleteTime = oldestTs + DAYS_TO_KEEP*86_400_000;
+        drawCountdown();                                          // pinta ya
+        countdownHandle = setInterval(drawCountdown, 1000);       // cada seg.
+      }
 
-      if (countdownTimer) clearInterval(countdownTimer);
-      countdownTimer = setInterval(() => updateCountdown(nextClean), 1000);
-      updateCountdown(nextClean);
-
-      reversed.forEach(log => {
-        const dt    = new Date(log.timestamp);
-        const entry = document.createElement('div');
-        entry.className = 'log-entry ' + (log.enviado ? 'sent':'idle');
-        entry.innerHTML = `
-          <div class="time">🕓 ${dt.toLocaleDateString('es-PE')} ${dt.toLocaleTimeString('es-PE')}</div>
-          <div class="details">
-            ${log.enviado
-              ? `🚀 <strong>Webhook enviado</strong><br>
-                 📅 Fecha SBS: ${log.fechaSBS}<br>
-                 🔗 <a class="webhook-link" href="${WEBHOOK_N8N}" target="_blank">${WEBHOOK_N8N}</a>`
-              : `⏸️ <strong>Nada que enviar</strong><br>
-                 📅 Fecha SBS: ${log.fechaSBS}` }
+      /* Render */
+      data.slice().reverse().forEach(log=>{
+        const dt = new Date(log.timestamp);
+        const html = `
+          <div class="log-entry ${log.enviado?'sent':'idle'}">
+            <div class="time">🕓 ${dt.toLocaleDateString('es-PE')} ${dt.toLocaleTimeString('es-PE')}</div>
+            <div class="details">
+              ${log.enviado
+                ? `🚀 <strong>Webhook enviado</strong><br>
+                   📅 Fecha SBS: ${log.fechaSBS}<br>
+                   🔗 <a class="webhook-link" href="${WEBHOOK_N8N}" target="_blank">${WEBHOOK_N8N}</a>`
+                : `⏸️ <strong>Nada que enviar</strong><br>
+                   📅 Fecha SBS: ${log.fechaSBS}` }
+            </div>
           </div>`;
-        live.appendChild(entry);
-        if (log.enviado) sent.appendChild(entry.cloneNode(true));
+        live.insertAdjacentHTML('beforeend', html);
+        if(log.enviado) sent.insertAdjacentHTML('beforeend', html);
       });
     }
 
-    // ---------------- Cuenta regresiva -------------
-    function updateCountdown(target) {
-      const diff = target - Date.now();
-      if (diff <= 0) {
-        document.getElementById('next-clean').textContent = '🧹 Regenerando logs...';
-        return;
-      }
-      const d = Math.floor(diff/8.64e7);
-      const h = Math.floor(diff/3.6e6)%24;
-      const m = Math.floor(diff/6e4)%60;
-      const s = Math.floor(diff/1000)%60;
-      document.getElementById('next-clean').textContent =
-        `⏳ Próxima limpieza en: ${d}d ${h}h ${m}m ${s}s`;
-    }
-
-    // 🔄 Prim. carga
+    /* ------- Inicial & actualizaciones vía WebSocket ------- */
     loadLogs();
 
-    // ---------------- WebSocket real-time -----------
     const socket = io();
-    socket.on('updateLogs', () => {
+    socket.on('updateLogs', ()=>{
       console.log('📥 Nuevo log recibido');
-      loadLogs();                       // refresca sin recargar página
+      loadLogs();               // refresca tablas; countdown NO se reinicia
     });
   </script>
 

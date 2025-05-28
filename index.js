@@ -16,7 +16,7 @@ const LOG_FILE     = path.join(__dirname, 'logs.json');
 const WEBHOOK_N8N  = 'https://jeancarlovidela.app.n8n.cloud/webhook/8f405f9f-2fc3-459b-9b04-bd190c5fe17c';
 
 const EVERY_MINUTE = 60_000;
-const DAYS_TO_KEEP = 5;
+const DAYS_TO_KEEP = 3;
 const MS_IN_DAY    = 24 * 60 * 60 * 1000;
 
 // 👉  carpeta “public/” con index.html, css, etc.
